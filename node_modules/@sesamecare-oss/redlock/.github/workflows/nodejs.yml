@@ -1,0 +1,89 @@
+name: Node build, test and publish
+
+on:
+  pull_request:
+    types: [assigned, opened, synchronize, reopened]
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup stale actions
+        uses: styfle/cancel-workflow-action@0.12.1
+        with:
+          access_token: ${{ github.token }}
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    strategy:
+      matrix:
+        node-version: [22, 20, 18, 16]
+
+    env:
+      YARN_IGNORE_NODE: 1
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: yarn
+      - name: Enable docker layer cache
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+      - name: Pull docker images
+        run: docker-compose pull
+        continue-on-error: true
+        env:
+          NODE_VERSION: ${{ matrix.node-version }}
+      - name: Lint the source
+        run: docker compose run --rm --no-TTY builder yarn lint
+        env:
+          NODE_VERSION: ${{ matrix.node-version }}
+      - name: Transpile into dist
+        run: docker compose run --rm --no-TTY builder yarn build
+        env:
+          NODE_VERSION: ${{ matrix.node-version }}
+      - name: Run tests
+        run: docker compose run --rm --no-TTY runner yarn test
+        env:
+          NODE_VERSION: ${{ matrix.node-version }}
+      - name: Stop containers
+        if: always()
+        run: docker compose down
+        env:
+          NODE_VERSION: ${{ matrix.node-version }}
+
+  publish-npm:
+    needs: build
+    timeout-minutes: 5
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      issues: write
+      id-token: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - run: yarn install --immutable
+      - run: yarn build
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.SESAMECARE_OSS_NPM_TOKEN }}
+        run: |
+          yarn dlx semantic-release
