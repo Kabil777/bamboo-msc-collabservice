@@ -8,4 +8,11 @@ export const RoleClient = {
             },
         });
     },
+    getDocsRole: (docsId, userId) => {
+        return http.get(`/api/v1/docs/role/${docsId}`, {
+            headers: {
+                "X-User-Id": String(userId),
+            },
+        });
+    },
 };

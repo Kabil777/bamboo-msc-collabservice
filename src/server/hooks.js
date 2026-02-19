@@ -26,6 +26,11 @@ async function resolveBlogRole(userId, blogId) {
     return data;
 }
 
+async function resolveDocsRole(userId, docsId) {
+    const { data } = await RoleClient.getDocsRole(docsId, userId);
+    return data;
+}
+
 async function resolveRoleForDocument(userId, documentName) {
     const cacheKey = getRoleCacheKey(userId, documentName);
     const cached = roleCache.get(cacheKey);
@@ -35,38 +40,62 @@ async function resolveRoleForDocument(userId, documentName) {
 
     const info = parseCollabDocumentName(documentName);
 
-    // Blog role mapping is migrated. Docs role mapping can be added similarly.
-    if (info.type !== "blog") {
-        const fallback = { readOnly: false, role: "owner" };
+    if (info.type === "blog") {
+        const roleResponse = await resolveBlogRole(userId, info.blogId);
+        if (!roleResponse?.ok) {
+            throw new AuthError({
+                message: "Forbidden",
+                code: "FORBIDDEN",
+                httpStatus: 403,
+                wsCode: 4403,
+                reason: "FORBIDDEN",
+            });
+        }
+
+        const resolved = {
+            readOnly: Boolean(roleResponse.readOnly),
+            role: roleResponse.role,
+        };
+
         roleCache.set(cacheKey, {
-            ...fallback,
+            ...resolved,
             expiresAt: Date.now() + ROLE_CACHE_TTL_MS,
         });
-        return fallback;
+
+        return resolved;
     }
 
-    const roleResponse = await resolveBlogRole(userId, info.blogId);
-    if (!roleResponse?.ok) {
-        throw new AuthError({
-            message: "Forbidden",
-            code: "FORBIDDEN",
-            httpStatus: 403,
-            wsCode: 4403,
-            reason: "FORBIDDEN",
+    if (info.type === "docs-page" || info.type === "docs-sidebar") {
+        const roleResponse = await resolveDocsRole(userId, info.docsId);
+        if (!roleResponse?.ok) {
+            throw new AuthError({
+                message: "Forbidden",
+                code: "FORBIDDEN",
+                httpStatus: 403,
+                wsCode: 4403,
+                reason: "FORBIDDEN",
+            });
+        }
+
+        const resolved = {
+            readOnly: Boolean(roleResponse.readOnly),
+            role: roleResponse.role,
+        };
+
+        roleCache.set(cacheKey, {
+            ...resolved,
+            expiresAt: Date.now() + ROLE_CACHE_TTL_MS,
         });
+
+        return resolved;
     }
 
-    const resolved = {
-        readOnly: Boolean(roleResponse.readOnly),
-        role: roleResponse.role,
-    };
-
+    const fallback = { readOnly: false, role: "owner" };
     roleCache.set(cacheKey, {
-        ...resolved,
+        ...fallback,
         expiresAt: Date.now() + ROLE_CACHE_TTL_MS,
     });
-
-    return resolved;
+    return fallback;
 }
 
 function assertUnexpiredConnection(context) {
@@ -129,6 +158,12 @@ export const collabHooks = {
                 documentName,
             );
             connectionConfig.readOnly = roleInfo.readOnly;
+            connectionConfig.user = user;
+            connectionConfig.context = {
+                user,
+                role: roleInfo.role,
+                tokenExpiresAt: user.tokenExpiresAt,
+            };
 
             return {
                 user,
@@ -155,20 +190,18 @@ export const collabHooks = {
     },
 
     async onLoadDocument({ documentName, document }) {
-        const yMeta = documentName.split(":");
+        const info = parseCollabDocumentName(documentName);
 
-        if (yMeta[0] === "blog") {
-            return loadBlogDocument(yMeta[1], document);
+        if (info.type === "blog") {
+            return loadBlogDocument(info.blogId, document);
         }
 
-        if (yMeta[0] === "docs") {
-            if (yMeta[1] === "page") {
-                return loadDocsPageDocument(yMeta[2], document);
-            }
+        if (info.type === "docs-page") {
+            return loadDocsPageDocument(info.pageId, document);
+        }
 
-            if (yMeta[1] === "sidebar") {
-                return loadDocsSidebarDocument(yMeta[2], document);
-            }
+        if (info.type === "docs-sidebar") {
+            return loadDocsSidebarDocument(info.docsId, document);
         }
 
         return document;
@@ -188,6 +221,10 @@ export const collabHooks = {
             meta.set("saveRequestedAt", 0);
 
             const isSave = saveAt > last;
+
+            if (documentName.startsWith("docs:page:")) {
+                meta.set("dirty", true);
+            }
 
             try {
                 await scheduleStore(documentName, document, isSave);

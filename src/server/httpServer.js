@@ -5,6 +5,8 @@ import { AuthError, isAuthError, normalizeAuthError } from "#lib/authError.js";
 import { verifyAccessToken } from "#lib/jwt.js";
 import { COLLAB_PATH, PORT, isCollabPath } from "./config.js";
 import { saveBlog } from "#services/persistence/saveBlogContent.js";
+import { saveDocsPage } from "#services/persistence/saveDocsPageContent.js";
+import { saveDocsAll } from "#services/persistence/saveDocsAllContent.js";
 import { flushStore } from "../../lib/documentPersistenceScheduler.js";
 
 function statusText(status) {
@@ -126,6 +128,121 @@ export function createHttpServer(collabServer) {
             return res
                 .status(500)
                 .json({ ok: false, error: "save_failed", blogId: id });
+        }
+    });
+    app.post("/api/docs/save/:docsId/:pageId", async (req, res) => {
+        const { docsId, pageId } = req.params;
+        const pageDocumentName = `docs:page:${docsId}:${pageId}`;
+        const sidebarDocumentName = `docs:sidebar:${docsId}`;
+
+        try {
+            await authenticateHttpRequest(req);
+
+            const livePage =
+                collabServer?.hocuspocus?.documents?.get(pageDocumentName);
+            const liveSidebar =
+                collabServer?.hocuspocus?.documents?.get(sidebarDocumentName);
+
+            if (livePage) {
+                await flushStore(pageDocumentName, livePage, true);
+                if (liveSidebar) {
+                    await flushStore(sidebarDocumentName, liveSidebar, false);
+                }
+                return res.status(200).json({
+                    ok: true,
+                    source: "live-doc",
+                    docsId,
+                    pageId,
+                });
+            }
+
+            const result = await saveDocsPage(pageId);
+
+            if (!result.ok && result.reason === "not_found") {
+                return res.status(404).json({
+                    ok: false,
+                    error: "page_not_found",
+                    docsId,
+                    pageId,
+                });
+            }
+
+            if (!result.ok) {
+                return res.status(500).json({
+                    ok: false,
+                    error: "save_failed",
+                    docsId,
+                    pageId,
+                });
+            }
+
+            return res.status(200).json({
+                ok: true,
+                source: "db",
+                docsId,
+                pageId,
+            });
+        } catch (error) {
+            if (isAuthError(error)) {
+                return res.status(error.httpStatus || 401).json({
+                    ok: false,
+                    code: error.code || "UNAUTHORIZED",
+                    message: error.message || "Unauthorized",
+                });
+            }
+
+            return res.status(500).json({
+                ok: false,
+                error: "save_failed",
+                docsId,
+                pageId,
+            });
+        }
+    });
+    app.post("/api/docs/save/:docsId", async (req, res) => {
+        const { docsId } = req.params;
+
+        try {
+            await authenticateHttpRequest(req);
+
+            const result = await saveDocsAll(docsId, collabServer);
+
+            if (!result.ok && result.reason === "not_found") {
+                return res.status(404).json({
+                    ok: false,
+                    error: "docs_not_found",
+                    docsId,
+                });
+            }
+
+            if (!result.ok) {
+                return res.status(500).json({
+                    ok: false,
+                    error: "save_failed",
+                    docsId,
+                });
+            }
+
+            return res.status(200).json({
+                ok: true,
+                source: result.source,
+                docsId,
+                pages: result.pages,
+            });
+        } catch (error) {
+            if (isAuthError(error)) {
+                return res.status(error.httpStatus || 401).json({
+                    ok: false,
+                    code: error.code || "UNAUTHORIZED",
+                    message: error.message || "Unauthorized",
+                });
+            }
+
+            return res.status(500).json({
+                ok: false,
+                error: "save_failed",
+                docsId,
+            });
         }
     });
     app.all([COLLAB_PATH, "/"], async (req, res) => {

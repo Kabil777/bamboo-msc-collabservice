@@ -7,9 +7,15 @@ export function parseCollabDocumentName(documentName) {
 
     if (parts[0] === "docs") {
         if (parts[1] === "page") {
-            return { type: "docs-page", pageId: parts[2] };
+            if (!parts[2] || !parts[3]) {
+                throw new Error(`Invalid docs page name: ${documentName}`);
+            }
+            return { type: "docs-page", docsId: parts[2], pageId: parts[3] };
         }
         if (parts[1] === "sidebar") {
+            if (!parts[2]) {
+                throw new Error(`Invalid docs sidebar name: ${documentName}`);
+            }
             return { type: "docs-sidebar", docsId: parts[2] };
         }
     }
