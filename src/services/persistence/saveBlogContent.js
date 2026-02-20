@@ -4,7 +4,7 @@ import { generateMarkdown } from "#lib/yDocToMarkdown.js";
 import { BlogClient } from "../../../api/blog-client.js";
 import * as Y from "yjs";
 
-export async function saveBlog(id) {
+export async function saveBlog(id, publishMeta = {}) {
     try {
         const { rows } = await pool.query(
             `
@@ -41,7 +41,7 @@ export async function saveBlog(id) {
             return { ok: false, reason: "not_found" };
         }
 
-        await BlogClient.savePost(id, markdown);
+        await BlogClient.savePost(id, markdown, publishMeta);
         return { ok: true, source: "db" };
     } catch (e) {
         logger.error({ id, err: e }, "saveBlog failed");

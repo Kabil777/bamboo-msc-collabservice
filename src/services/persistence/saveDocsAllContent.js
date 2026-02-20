@@ -81,7 +81,7 @@ async function getPageStatesFromDb(pageIds) {
     return map;
 }
 
-export async function saveDocsAll(docsId, collabServer) {
+export async function saveDocsAll(docsId, collabServer, publishMeta = {}) {
     try {
         const sidebarName = `docs:sidebar:${docsId}`;
         const liveSidebar =
@@ -144,6 +144,9 @@ export async function saveDocsAll(docsId, collabServer) {
         }
 
         const tree = buildTreeFromSidebar(sidebarDoc, pageMarkdownById);
+        const meta = sidebarDoc?.getMap("meta");
+        const visibility = publishMeta.visibility ?? meta?.get("publishVisibility");
+        const status = publishMeta.status ?? meta?.get("publishStatus");
         await DocsClient.saveDocsContent(docsId, {
             tree,
             pages: Array.from(pageMarkdownById.entries()).map(
@@ -152,6 +155,8 @@ export async function saveDocsAll(docsId, collabServer) {
                     markdown,
                 }),
             ),
+            visibility,
+            status,
         });
 
         return {

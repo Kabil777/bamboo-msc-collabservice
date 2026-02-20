@@ -56,6 +56,7 @@ export function createHttpServer(collabServer) {
         "http://127.0.0.1:3000",
     ]);
 
+    app.use(express.json());
     app.use((req, res, next) => {
         const origin = req.headers.origin;
         if (origin && allowedOrigins.has(origin)) {
@@ -87,6 +88,7 @@ export function createHttpServer(collabServer) {
     app.post("/api/blog/save/:id", async (req, res) => {
         const { id } = req.params;
         const documentName = `blog:${id}`;
+        const { visibility, status } = req.body || {};
 
         try {
             await authenticateHttpRequest(req);
@@ -95,13 +97,16 @@ export function createHttpServer(collabServer) {
                 collabServer?.hocuspocus?.documents?.get(documentName);
 
             if (liveDocument) {
+                const meta = liveDocument.getMap("meta");
+                if (visibility) meta.set("publishVisibility", visibility);
+                if (status) meta.set("publishStatus", status);
                 await flushStore(documentName, liveDocument, true);
                 return res
                     .status(200)
                     .json({ ok: true, source: "live-doc", blogId: id });
             }
 
-            const result = await saveBlog(id);
+            const result = await saveBlog(id, { visibility, status });
 
             if (!result.ok && result.reason === "not_found") {
                 return res
@@ -134,6 +139,7 @@ export function createHttpServer(collabServer) {
         const { docsId, pageId } = req.params;
         const pageDocumentName = `docs:page:${docsId}:${pageId}`;
         const sidebarDocumentName = `docs:sidebar:${docsId}`;
+        const { visibility, status } = req.body || {};
 
         try {
             await authenticateHttpRequest(req);
@@ -146,6 +152,9 @@ export function createHttpServer(collabServer) {
             if (livePage) {
                 await flushStore(pageDocumentName, livePage, true);
                 if (liveSidebar) {
+                    const meta = liveSidebar.getMap("meta");
+                    if (visibility) meta.set("publishVisibility", visibility);
+                    if (status) meta.set("publishStatus", status);
                     await flushStore(sidebarDocumentName, liveSidebar, false);
                 }
                 return res.status(200).json({
@@ -201,11 +210,15 @@ export function createHttpServer(collabServer) {
     });
     app.post("/api/docs/save/:docsId", async (req, res) => {
         const { docsId } = req.params;
+        const { visibility, status } = req.body || {};
 
         try {
             await authenticateHttpRequest(req);
 
-            const result = await saveDocsAll(docsId, collabServer);
+            const result = await saveDocsAll(docsId, collabServer, {
+                visibility,
+                status,
+            });
 
             if (!result.ok && result.reason === "not_found") {
                 return res.status(404).json({

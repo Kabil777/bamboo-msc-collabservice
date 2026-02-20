@@ -226,11 +226,9 @@ export const collabHooks = {
                 meta.set("dirty", true);
             }
 
-            try {
-                await scheduleStore(documentName, document, isSave);
-            } finally {
+            scheduleStore(documentName, document, isSave, () => {
                 meta.set("isPersisting", false);
-            }
+            });
         }
     },
 

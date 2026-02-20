@@ -26,7 +26,7 @@ export const http = axios.create({
 http.interceptors.request.use((config) => {
     config.headers["Content-Type"] = "application/json";
     const userId = process.env.COLLAB_ACTOR_USER_ID;
-    if (userId) {
+    if (userId && !config.headers["X-User-Id"]) {
         config.headers["X-User-Id"] = userId;
     }
     return config;
