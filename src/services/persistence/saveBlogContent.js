@@ -41,7 +41,9 @@ export async function saveBlog(id, publishMeta = {}) {
             return { ok: false, reason: "not_found" };
         }
 
-        await BlogClient.savePost(id, markdown, publishMeta);
+        await BlogClient.savePost(id, markdown, publishMeta, {
+            userId: publishMeta.userId,
+        });
         return { ok: true, source: "db" };
     } catch (e) {
         logger.error({ id, err: e }, "saveBlog failed");

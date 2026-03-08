@@ -14,6 +14,7 @@ export const loadBlogDocument = async (id, document) => {
     const meta = document.getMap("meta");
     if (!meta.has("lastPersistedAt")) meta.set("lastPersistedAt", 0);
     if (!meta.has("saveRequestedAt")) meta.set("saveRequestedAt", 0);
+    if (!meta.has("saveActorUserId")) meta.set("saveActorUserId", "");
 
     return document;
 };

@@ -53,6 +53,7 @@ export async function persistBlogState(blogId, document, update, isSaveReq) {
     const meta = document.getMap("meta");
     const visibility = meta.get("publishVisibility");
     const status = meta.get("publishStatus");
+    const userId = meta.get("saveActorUserId");
 
     await pool.query(
         `  
@@ -68,5 +69,10 @@ export async function persistBlogState(blogId, document, update, isSaveReq) {
         [blogId, update, markdown],
     );
 
-    await BlogClient.savePost(blogId, markdown, { visibility, status });
+    await BlogClient.savePost(
+        blogId,
+        markdown,
+        { visibility, status },
+        { userId },
+    );
 }

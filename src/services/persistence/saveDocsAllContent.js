@@ -147,17 +147,23 @@ export async function saveDocsAll(docsId, collabServer, publishMeta = {}) {
         const meta = sidebarDoc?.getMap("meta");
         const visibility = publishMeta.visibility ?? meta?.get("publishVisibility");
         const status = publishMeta.status ?? meta?.get("publishStatus");
-        await DocsClient.saveDocsContent(docsId, {
-            tree,
-            pages: Array.from(pageMarkdownById.entries()).map(
-                ([pageId, markdown]) => ({
-                    pageId,
-                    markdown,
-                }),
-            ),
-            visibility,
-            status,
-        });
+        await DocsClient.saveDocsContent(
+            docsId,
+            {
+                tree,
+                pages: Array.from(pageMarkdownById.entries()).map(
+                    ([pageId, markdown]) => ({
+                        pageId,
+                        markdown,
+                    }),
+                ),
+                visibility,
+                status,
+            },
+            {
+                userId: publishMeta.userId,
+            },
+        );
 
         return {
             ok: true,

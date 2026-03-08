@@ -8,6 +8,7 @@ import { saveBlog } from "#services/persistence/saveBlogContent.js";
 import { saveDocsPage } from "#services/persistence/saveDocsPageContent.js";
 import { saveDocsAll } from "#services/persistence/saveDocsAllContent.js";
 import { flushStore } from "../../lib/documentPersistenceScheduler.js";
+import { RoleClient } from "../../api/role-client.js";
 
 function statusText(status) {
     if (status === 401) return "Unauthorized";
@@ -46,6 +47,72 @@ async function authenticateHttpRequest(req) {
     } catch (error) {
         throw normalizeAuthError(error);
     }
+}
+
+async function requireBlogAccess(userId, blogId, options = {}) {
+    const { requireOwner = false, allowReadOnly = false } = options;
+    const { data } = await RoleClient.getBlogRole(blogId, userId);
+    if (!data?.ok) {
+        throw new AuthError({
+            message: "Forbidden",
+            code: "FORBIDDEN",
+            httpStatus: 403,
+            wsCode: 4403,
+            reason: "FORBIDDEN",
+        });
+    }
+    if (requireOwner && data.role !== "OWNER") {
+        throw new AuthError({
+            message: "Forbidden",
+            code: "FORBIDDEN",
+            httpStatus: 403,
+            wsCode: 4403,
+            reason: "FORBIDDEN",
+        });
+    }
+    if (!allowReadOnly && data.readOnly) {
+        throw new AuthError({
+            message: "Forbidden",
+            code: "FORBIDDEN",
+            httpStatus: 403,
+            wsCode: 4403,
+            reason: "FORBIDDEN",
+        });
+    }
+    return data;
+}
+
+async function requireDocsAccess(userId, docsId, options = {}) {
+    const { requireOwner = false, allowReadOnly = false } = options;
+    const { data } = await RoleClient.getDocsRole(docsId, userId);
+    if (!data?.ok) {
+        throw new AuthError({
+            message: "Forbidden",
+            code: "FORBIDDEN",
+            httpStatus: 403,
+            wsCode: 4403,
+            reason: "FORBIDDEN",
+        });
+    }
+    if (requireOwner && data.role !== "OWNER") {
+        throw new AuthError({
+            message: "Forbidden",
+            code: "FORBIDDEN",
+            httpStatus: 403,
+            wsCode: 4403,
+            reason: "FORBIDDEN",
+        });
+    }
+    if (!allowReadOnly && data.readOnly) {
+        throw new AuthError({
+            message: "Forbidden",
+            code: "FORBIDDEN",
+            httpStatus: 403,
+            wsCode: 4403,
+            reason: "FORBIDDEN",
+        });
+    }
+    return data;
 }
 
 export function createHttpServer(collabServer) {
@@ -91,13 +158,17 @@ export function createHttpServer(collabServer) {
         const { visibility, status } = req.body || {};
 
         try {
-            await authenticateHttpRequest(req);
+            const user = await authenticateHttpRequest(req);
+            await requireBlogAccess(user.id, id, {
+                requireOwner: Boolean(visibility || status),
+            });
 
             const liveDocument =
                 collabServer?.hocuspocus?.documents?.get(documentName);
 
             if (liveDocument) {
                 const meta = liveDocument.getMap("meta");
+                meta.set("saveActorUserId", String(user.id));
                 if (visibility) meta.set("publishVisibility", visibility);
                 if (status) meta.set("publishStatus", status);
                 await flushStore(documentName, liveDocument, true);
@@ -106,7 +177,11 @@ export function createHttpServer(collabServer) {
                     .json({ ok: true, source: "live-doc", blogId: id });
             }
 
-            const result = await saveBlog(id, { visibility, status });
+            const result = await saveBlog(id, {
+                visibility,
+                status,
+                userId: user.id,
+            });
 
             if (!result.ok && result.reason === "not_found") {
                 return res
@@ -142,7 +217,10 @@ export function createHttpServer(collabServer) {
         const { visibility, status } = req.body || {};
 
         try {
-            await authenticateHttpRequest(req);
+            const user = await authenticateHttpRequest(req);
+            await requireDocsAccess(user.id, docsId, {
+                requireOwner: Boolean(visibility || status),
+            });
 
             const livePage =
                 collabServer?.hocuspocus?.documents?.get(pageDocumentName);
@@ -213,11 +291,15 @@ export function createHttpServer(collabServer) {
         const { visibility, status } = req.body || {};
 
         try {
-            await authenticateHttpRequest(req);
+            const user = await authenticateHttpRequest(req);
+            await requireDocsAccess(user.id, docsId, {
+                requireOwner: Boolean(visibility || status),
+            });
 
             const result = await saveDocsAll(docsId, collabServer, {
                 visibility,
                 status,
+                userId: user.id,
             });
 
             if (!result.ok && result.reason === "not_found") {

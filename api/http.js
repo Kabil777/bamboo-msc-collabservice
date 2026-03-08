@@ -32,6 +32,17 @@ http.interceptors.request.use((config) => {
     return config;
 });
 
+export function withActorHeaders(userId, headers = {}) {
+    if (!userId) {
+        return headers;
+    }
+
+    return {
+        ...headers,
+        "X-User-Id": String(userId),
+    };
+}
+
 http.interceptors.response.use(
     (res) => res,
     (err) => {
