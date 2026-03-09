@@ -1,6 +1,7 @@
 import { getAccessTokenFromRequest } from "#lib/cookieParser.js";
 import { AuthError, normalizeAuthError } from "#lib/authError.js";
 import { verifyAccessToken } from "#lib/jwt.js";
+import { logger } from "#lib/logger.js";
 import { RoleClient } from "../../api/role-client.js";
 import {
     flushStore,
@@ -22,13 +23,101 @@ function getRoleCacheKey(userId, documentName) {
 }
 
 async function resolveBlogRole(userId, blogId) {
-    const { data } = await RoleClient.getBlogRole(blogId, userId);
-    return data;
+    try {
+        const { data } = await RoleClient.getBlogRole(blogId, userId);
+        return data;
+    } catch (error) {
+        throw mapRoleLookupError(error, "blog", blogId, userId);
+    }
 }
 
 async function resolveDocsRole(userId, docsId) {
-    const { data } = await RoleClient.getDocsRole(docsId, userId);
-    return data;
+    try {
+        const { data } = await RoleClient.getDocsRole(docsId, userId);
+        return data;
+    } catch (error) {
+        throw mapRoleLookupError(error, "docs", docsId, userId);
+    }
+}
+
+function mapRoleLookupError(error, resourceType, resourceId, userId) {
+    const status = error?.response?.status;
+    const payload = error?.response?.data;
+    const message =
+        payload?.message ||
+        payload?.error ||
+        error?.message ||
+        "Forbidden";
+
+    logger.error(
+        {
+            err: error,
+            resourceType,
+            resourceId,
+            userId,
+            status,
+            payload,
+        },
+        "collab role lookup failed",
+    );
+
+    if (status === 401) {
+        return new AuthError({
+            message,
+            code: payload?.code || "UNAUTHORIZED",
+            httpStatus: 401,
+            wsCode: 4401,
+            reason: payload?.code || "TOKEN_EXPIRED",
+        });
+    }
+
+    if (status === 403) {
+        return new AuthError({
+            message,
+            code: payload?.code || "FORBIDDEN",
+            httpStatus: 403,
+            wsCode: 4403,
+            reason: payload?.code || "FORBIDDEN",
+        });
+    }
+
+    if (status === 404) {
+        return new AuthError({
+            message,
+            code: payload?.code || "NOT_FOUND",
+            httpStatus: 404,
+            wsCode: 4404,
+            reason: payload?.code || "NOT_FOUND",
+        });
+    }
+
+    if (status === 405) {
+        return new AuthError({
+            message,
+            code: payload?.code || "METHOD_NOT_ALLOWED",
+            httpStatus: 405,
+            wsCode: 4405,
+            reason: payload?.code || "METHOD_NOT_ALLOWED",
+        });
+    }
+
+    if (typeof status === "number" && status >= 500) {
+        return new AuthError({
+            message,
+            code: payload?.code || "UPSTREAM_ERROR",
+            httpStatus: 502,
+            wsCode: 4502,
+            reason: payload?.code || "UPSTREAM_ERROR",
+        });
+    }
+
+    return new AuthError({
+        message: message || "Role lookup unavailable",
+        code: payload?.code || "UPSTREAM_UNAVAILABLE",
+        httpStatus: 503,
+        wsCode: 4503,
+        reason: payload?.code || "UPSTREAM_UNAVAILABLE",
+    });
 }
 
 async function resolveRoleForDocument(userId, documentName) {
@@ -175,6 +264,10 @@ export const collabHooks = {
                 throw error;
             }
 
+            logger.error(
+                { err: error, documentName, userId: user.id },
+                "collab onAuthenticate failed unexpectedly",
+            );
             throw new AuthError({
                 message: "Forbidden",
                 code: "FORBIDDEN",

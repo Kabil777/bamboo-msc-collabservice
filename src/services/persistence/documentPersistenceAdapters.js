@@ -1,6 +1,9 @@
 import { pool } from "#lib/postgresPool.js";
+import {
+    enqueueCanonicalSyncJob,
+    processCanonicalSyncJob,
+} from "#lib/canonicalSyncOutbox.js";
 import { generateMarkdown } from "#lib/yDocToMarkdown.js";
-import { BlogClient } from "../../../api/blog-client.js";
 
 export async function persistDocsPageState(pageId, document, update) {
     const markdown = generateMarkdown(document);
@@ -54,25 +57,52 @@ export async function persistBlogState(blogId, document, update, isSaveReq) {
     const visibility = meta.get("publishVisibility");
     const status = meta.get("publishStatus");
     const userId = meta.get("saveActorUserId");
+    const client = await pool.connect();
+    let committed = false;
 
-    await pool.query(
-        `  
-        INSERT INTO blog_collab_state(blog_id,yjs_state,markdown)
-        VALUES (
-            $1,$2,$3
-        ) ON CONFLICT (blog_id)
-        DO UPDATE SET
-          yjs_state = EXCLUDED.yjs_state,
-          markdown = EXCLUDED.markdown,
-          updated_at = now()
-        `,
-        [blogId, update, markdown],
-    );
+    try {
+        await client.query("BEGIN");
+        await client.query(
+            `  
+            INSERT INTO blog_collab_state(blog_id,yjs_state,markdown)
+            VALUES (
+                $1,$2,$3
+            ) ON CONFLICT (blog_id)
+            DO UPDATE SET
+              yjs_state = EXCLUDED.yjs_state,
+              markdown = EXCLUDED.markdown,
+              updated_at = now()
+            `,
+            [blogId, update, markdown],
+        );
+        const jobKey = await enqueueCanonicalSyncJob(
+            {
+                resourceType: "blog",
+                resourceId: blogId,
+                payload: {
+                    markdown,
+                    visibility,
+                    status,
+                    userId,
+                },
+            },
+            client,
+        );
+        await client.query("COMMIT");
+        committed = true;
 
-    await BlogClient.savePost(
-        blogId,
-        markdown,
-        { visibility, status },
-        { userId },
-    );
+        const syncResult = await processCanonicalSyncJob(jobKey);
+        if (!syncResult.ok) {
+            return { ok: true, queued: true };
+        }
+
+        return { ok: true, queued: false };
+    } catch (error) {
+        if (!committed) {
+            await client.query("ROLLBACK");
+        }
+        throw error;
+    } finally {
+        client.release();
+    }
 }

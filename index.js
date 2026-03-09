@@ -1,4 +1,7 @@
 import "dotenv/config";
 import { startServer } from "./src/server/start.js";
 
-startServer();
+void startServer().catch((error) => {
+    console.error("[collab] failed to start", error);
+    process.exit(1);
+});

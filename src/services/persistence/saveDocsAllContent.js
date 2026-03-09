@@ -4,7 +4,10 @@ import { pool } from "#lib/postgresPool.js";
 import { flushStore } from "../../../lib/documentPersistenceScheduler.js";
 import { saveDocsPage } from "./saveDocsPageContent.js";
 import { generateMarkdown } from "#lib/yDocToMarkdown.js";
-import { DocsClient } from "../../../api/docs-client.js";
+import {
+    enqueueCanonicalSyncJob,
+    processCanonicalSyncJob,
+} from "#lib/canonicalSyncOutbox.js";
 
 function extractPageIdsFromSidebar(doc) {
     try {
@@ -81,6 +84,24 @@ async function getPageStatesFromDb(pageIds) {
     return map;
 }
 
+async function getPageStateFromDb(pageId) {
+    const { rows } = await pool.query(
+        `SELECT page_id, markdown, yjs_state
+         FROM docs_page_state
+         WHERE page_id = $1`,
+        [pageId],
+    );
+
+    if (!rows.length) {
+        return null;
+    }
+
+    return {
+        markdown: rows[0].markdown,
+        yjs_state: rows[0].yjs_state,
+    };
+}
+
 export async function saveDocsAll(docsId, collabServer, publishMeta = {}) {
     try {
         const sidebarName = `docs:sidebar:${docsId}`;
@@ -110,21 +131,20 @@ export async function saveDocsAll(docsId, collabServer, publishMeta = {}) {
                 collabServer?.hocuspocus?.documents?.get(pageName) || null;
 
             if (livePage) {
-                const meta = livePage.getMap("meta");
-                const isDirty = meta.get("dirty") === true;
-                const markdown = isDirty ? generateMarkdown(livePage) : null;
-
-                if (markdown != null) {
-                    pageMarkdownById.set(pageId, markdown);
-                    meta.set("dirty", false);
+                await flushStore(pageName, livePage, true);
+                const freshDbState = await getPageStateFromDb(pageId);
+                if (freshDbState?.markdown) {
+                    pageMarkdownById.set(pageId, freshDbState.markdown);
                 } else {
                     const dbState = dbStatesById.get(pageId);
                     if (dbState?.markdown) {
                         pageMarkdownById.set(pageId, dbState.markdown);
+                    } else if (dbState?.yjs_state) {
+                        const doc = new Y.Doc();
+                        Y.applyUpdate(doc, dbState.yjs_state);
+                        pageMarkdownById.set(pageId, generateMarkdown(doc));
                     }
                 }
-
-                await flushStore(pageName, livePage, true);
                 savedPages += 1;
                 continue;
             }
@@ -147,28 +167,59 @@ export async function saveDocsAll(docsId, collabServer, publishMeta = {}) {
         const meta = sidebarDoc?.getMap("meta");
         const visibility = publishMeta.visibility ?? meta?.get("publishVisibility");
         const status = publishMeta.status ?? meta?.get("publishStatus");
-        await DocsClient.saveDocsContent(
-            docsId,
-            {
-                tree,
-                pages: Array.from(pageMarkdownById.entries()).map(
-                    ([pageId, markdown]) => ({
-                        pageId,
-                        markdown,
-                    }),
-                ),
-                visibility,
-                status,
-            },
-            {
-                userId: publishMeta.userId,
-            },
-        );
+        const request = {
+            tree,
+            pages: Array.from(pageMarkdownById.entries()).map(
+                ([pageId, markdown]) => ({
+                    pageId,
+                    markdown,
+                }),
+            ),
+            visibility,
+            status,
+        };
+        const client = await pool.connect();
+        let committed = false;
+
+        try {
+            await client.query("BEGIN");
+            const jobKey = await enqueueCanonicalSyncJob(
+                {
+                    resourceType: "docs",
+                    resourceId: docsId,
+                    payload: {
+                        request,
+                        userId: publishMeta.userId,
+                    },
+                },
+                client,
+            );
+            await client.query("COMMIT");
+            committed = true;
+
+            const syncResult = await processCanonicalSyncJob(jobKey);
+            if (!syncResult.ok) {
+                return {
+                    ok: true,
+                    source: liveSidebar ? "live-doc" : "db",
+                    pages: savedPages,
+                    queued: true,
+                };
+            }
+        } catch (error) {
+            if (!committed) {
+                await client.query("ROLLBACK");
+            }
+            throw error;
+        } finally {
+            client.release();
+        }
 
         return {
             ok: true,
             source: liveSidebar ? "live-doc" : "db",
             pages: savedPages,
+            queued: false,
         };
     } catch (e) {
         logger.error({ docsId, err: e }, "saveDocsAll failed");

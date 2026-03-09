@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { getAccessTokenFromRequest } from "#lib/cookieParser.js";
 import { AuthError, isAuthError, normalizeAuthError } from "#lib/authError.js";
 import { verifyAccessToken } from "#lib/jwt.js";
+import { logger } from "#lib/logger.js";
 import { COLLAB_PATH, PORT, isCollabPath } from "./config.js";
 import { saveBlog } from "#services/persistence/saveBlogContent.js";
 import { saveDocsPage } from "#services/persistence/saveDocsPageContent.js";
@@ -13,7 +14,11 @@ import { RoleClient } from "../../api/role-client.js";
 function statusText(status) {
     if (status === 401) return "Unauthorized";
     if (status === 403) return "Forbidden";
+    if (status === 404) return "Not Found";
+    if (status === 405) return "Method Not Allowed";
     if (status === 400) return "Bad Request";
+    if (status === 502) return "Bad Gateway";
+    if (status === 503) return "Service Unavailable";
     return "Error";
 }
 
@@ -51,7 +56,12 @@ async function authenticateHttpRequest(req) {
 
 async function requireBlogAccess(userId, blogId, options = {}) {
     const { requireOwner = false, allowReadOnly = false } = options;
-    const { data } = await RoleClient.getBlogRole(blogId, userId);
+    let data;
+    try {
+        ({ data } = await RoleClient.getBlogRole(blogId, userId));
+    } catch (error) {
+        throw mapRoleLookupError(error, "blog", blogId, userId);
+    }
     if (!data?.ok) {
         throw new AuthError({
             message: "Forbidden",
@@ -84,7 +94,12 @@ async function requireBlogAccess(userId, blogId, options = {}) {
 
 async function requireDocsAccess(userId, docsId, options = {}) {
     const { requireOwner = false, allowReadOnly = false } = options;
-    const { data } = await RoleClient.getDocsRole(docsId, userId);
+    let data;
+    try {
+        ({ data } = await RoleClient.getDocsRole(docsId, userId));
+    } catch (error) {
+        throw mapRoleLookupError(error, "docs", docsId, userId);
+    }
     if (!data?.ok) {
         throw new AuthError({
             message: "Forbidden",
@@ -115,6 +130,86 @@ async function requireDocsAccess(userId, docsId, options = {}) {
     return data;
 }
 
+function mapRoleLookupError(error, resourceType, resourceId, userId) {
+    const status = error?.response?.status;
+    const payload = error?.response?.data;
+    const message =
+        payload?.message ||
+        payload?.error ||
+        error?.message ||
+        "Forbidden";
+
+    logger.error(
+        {
+            err: error,
+            resourceType,
+            resourceId,
+            userId,
+            status,
+            payload,
+        },
+        "collab http role lookup failed",
+    );
+
+    if (status === 401) {
+        return new AuthError({
+            message,
+            code: payload?.code || "UNAUTHORIZED",
+            httpStatus: 401,
+            wsCode: 4401,
+            reason: payload?.code || "TOKEN_EXPIRED",
+        });
+    }
+
+    if (status === 403) {
+        return new AuthError({
+            message,
+            code: payload?.code || "FORBIDDEN",
+            httpStatus: 403,
+            wsCode: 4403,
+            reason: payload?.code || "FORBIDDEN",
+        });
+    }
+
+    if (status === 404) {
+        return new AuthError({
+            message,
+            code: payload?.code || "NOT_FOUND",
+            httpStatus: 404,
+            wsCode: 4404,
+            reason: payload?.code || "NOT_FOUND",
+        });
+    }
+
+    if (status === 405) {
+        return new AuthError({
+            message,
+            code: payload?.code || "METHOD_NOT_ALLOWED",
+            httpStatus: 405,
+            wsCode: 4405,
+            reason: payload?.code || "METHOD_NOT_ALLOWED",
+        });
+    }
+
+    if (typeof status === "number" && status >= 500) {
+        return new AuthError({
+            message,
+            code: payload?.code || "UPSTREAM_ERROR",
+            httpStatus: 502,
+            wsCode: 4502,
+            reason: payload?.code || "UPSTREAM_ERROR",
+        });
+    }
+
+    return new AuthError({
+        message: message || "Role lookup unavailable",
+        code: payload?.code || "UPSTREAM_UNAVAILABLE",
+        httpStatus: 503,
+        wsCode: 4503,
+        reason: payload?.code || "UPSTREAM_UNAVAILABLE",
+    });
+}
+
 export function createHttpServer(collabServer) {
     const app = express();
     const httpServer = createServer(app);
@@ -133,10 +228,7 @@ export function createHttpServer(collabServer) {
                 "Access-Control-Allow-Headers",
                 "Content-Type, Authorization",
             );
-            res.setHeader(
-                "Access-Control-Allow-Methods",
-                "GET,POST,OPTIONS",
-            );
+            res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
             res.setHeader("Vary", "Origin");
         }
 
