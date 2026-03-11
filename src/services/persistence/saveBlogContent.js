@@ -49,7 +49,7 @@ export async function saveBlog(id, publishMeta = {}) {
 
         try {
             await client.query("BEGIN");
-            const jobKey = await enqueueCanonicalSyncJob(
+            const job = await enqueueCanonicalSyncJob(
                 {
                     resourceType: "blog",
                     resourceId: id,
@@ -65,7 +65,7 @@ export async function saveBlog(id, publishMeta = {}) {
             await client.query("COMMIT");
             committed = true;
 
-            const syncResult = await processCanonicalSyncJob(jobKey);
+            const syncResult = await processCanonicalSyncJob(job.job_key);
             if (!syncResult.ok) {
                 return { ok: true, source: "db", queued: true };
             }

@@ -183,7 +183,7 @@ export async function saveDocsAll(docsId, collabServer, publishMeta = {}) {
 
         try {
             await client.query("BEGIN");
-            const jobKey = await enqueueCanonicalSyncJob(
+            const job = await enqueueCanonicalSyncJob(
                 {
                     resourceType: "docs",
                     resourceId: docsId,
@@ -197,7 +197,7 @@ export async function saveDocsAll(docsId, collabServer, publishMeta = {}) {
             await client.query("COMMIT");
             committed = true;
 
-            const syncResult = await processCanonicalSyncJob(jobKey);
+            const syncResult = await processCanonicalSyncJob(job.job_key);
             if (!syncResult.ok) {
                 return {
                     ok: true,

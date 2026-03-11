@@ -16,11 +16,35 @@ import {
 import { FIVE_MIN } from "./config.js";
 
 const ROLE_CACHE_TTL_MS = 30_000;
+const MAX_ROLE_CACHE_SIZE = 10_000;
 const roleCache = new Map();
 
 function getRoleCacheKey(userId, documentName) {
     return `${userId}:${documentName}`;
 }
+
+function pruneRoleCache() {
+    const now = Date.now();
+    for (const [cacheKey, entry] of roleCache.entries()) {
+        if (!entry || entry.expiresAt <= now) {
+            roleCache.delete(cacheKey);
+        }
+    }
+
+    if (roleCache.size <= MAX_ROLE_CACHE_SIZE) {
+        return;
+    }
+
+    const overflow = roleCache.size - MAX_ROLE_CACHE_SIZE;
+    const oldestEntries = Array.from(roleCache.entries())
+        .sort(([, left], [, right]) => left.expiresAt - right.expiresAt)
+        .slice(0, overflow);
+
+    oldestEntries.forEach(([cacheKey]) => roleCache.delete(cacheKey));
+}
+
+const roleCacheJanitor = setInterval(pruneRoleCache, ROLE_CACHE_TTL_MS);
+roleCacheJanitor.unref?.();
 
 async function resolveBlogRole(userId, blogId) {
     try {
@@ -121,10 +145,14 @@ function mapRoleLookupError(error, resourceType, resourceId, userId) {
 }
 
 async function resolveRoleForDocument(userId, documentName) {
+    pruneRoleCache();
     const cacheKey = getRoleCacheKey(userId, documentName);
     const cached = roleCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
         return cached;
+    }
+    if (cached) {
+        roleCache.delete(cacheKey);
     }
 
     const info = parseCollabDocumentName(documentName);

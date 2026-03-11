@@ -75,7 +75,7 @@ export async function persistBlogState(blogId, document, update, isSaveReq) {
             `,
             [blogId, update, markdown],
         );
-        const jobKey = await enqueueCanonicalSyncJob(
+        const job = await enqueueCanonicalSyncJob(
             {
                 resourceType: "blog",
                 resourceId: blogId,
@@ -91,7 +91,7 @@ export async function persistBlogState(blogId, document, update, isSaveReq) {
         await client.query("COMMIT");
         committed = true;
 
-        const syncResult = await processCanonicalSyncJob(jobKey);
+        const syncResult = await processCanonicalSyncJob(job.job_key);
         if (!syncResult.ok) {
             return { ok: true, queued: true };
         }
