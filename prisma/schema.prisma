@@ -1,0 +1,54 @@
+generator client {
+    provider = "prisma-client"
+    output   = "../src/generated/prisma"
+}
+
+datasource db {
+    provider = "postgresql"
+    schemas  = ["collab"]
+}
+
+model BlogPageState {
+    blogId    String   @id @map("blog_id") @db.Uuid
+    yjsState  Bytes    @map("yjs_state")
+    updatedAt DateTime @updatedAt @map("updated_at")
+    createdAt DateTime @default(now()) @map("created_at")
+
+    @@map("blog_page_state")
+    @@schema("collab")
+}
+
+model DocsPageState {
+    docsId    String   @map("docs_id") @db.Uuid
+    pageId    String   @id @map("page_id") @db.Uuid
+    yjsState  Bytes    @map("yjs_state")
+    updatedAt DateTime @updatedAt @map("updated_at")
+    createdAt DateTime @default(now()) @map("created_at")
+
+    @@index([docsId])
+    @@map("docs_page_state")
+    @@schema("collab")
+}
+
+model DocsSidebarState {
+    docsId    String   @id @map("docs_id") @db.Uuid
+    yjsState  Bytes    @map("yjs_state")
+    updatedAt DateTime @updatedAt @map("updated_at")
+    createdAt DateTime @default(now()) @map("created_at")
+
+    @@map("docs_sidebar_state")
+    @@schema("collab")
+}
+
+model CanonicalSyncJob {
+    id        BigInt   @id @default(autoincrement())
+    jobKey    String   @unique @map("job_key")
+    payload   Json
+    runAfter  DateTime @default(now()) @map("run_after")
+    attempts  Int      @default(0)
+    createdAt DateTime @default(now()) @map("created_at")
+    updatedAt DateTime @updatedAt @map("updated_at")
+
+    @@map("canonical_sync_jobs")
+    @@schema("collab")
+}
