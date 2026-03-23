@@ -36,6 +36,20 @@ export class RabbitManager {
         return this.channel;
     }
 
+    public static async publish(
+        exchange: string,
+        routeKey: string,
+        payload: string,
+    ) {
+        const channel = await this.getChannel();
+        await channel.assertExchange(exchange, "topic", { durable: true });
+
+        channel.publish(exchange, routeKey, Buffer.from(payload), {
+            persistent: true,
+            contentType: "application/json",
+        });
+    }
+
     public static async bindTopic(
         exchange: string,
         queue: string,
@@ -45,7 +59,10 @@ export class RabbitManager {
         await channel.assertExchange(exchange, "topic", { durable: true });
         await channel.assertQueue(queue, { durable: true });
         await channel.bindQueue(queue, exchange, routeKey);
-        logger.info({ exchange, queue, routeKey }, "rabbit topic binding ready");
+        logger.info(
+            { exchange, queue, routeKey },
+            "rabbit topic binding ready",
+        );
     }
 
     public static async consume(
@@ -71,15 +88,17 @@ export class RabbitManager {
             try {
                 await handler(msg, channel);
                 channel.ack(msg);
-                logger.info({ queue, retryCount }, "rabbit message acknowledged");
+                logger.info(
+                    { queue, retryCount },
+                    "rabbit message acknowledged",
+                );
             } catch (error) {
                 logger.error(
                     {
                         queue,
                         retryCount,
                         message: this.getErrorMessage(error),
-                        stack:
-                            error instanceof Error ? error.stack : undefined,
+                        stack: error instanceof Error ? error.stack : undefined,
                         error,
                     },
                     "Rabbit consumer failed",
@@ -107,7 +126,8 @@ export class RabbitManager {
                             persistent: true,
                             headers,
                             contentType:
-                                msg.properties.contentType ?? "application/json",
+                                msg.properties.contentType ??
+                                "application/json",
                         });
                     }, this.retryDelayMs);
                     return;
@@ -123,7 +143,6 @@ export class RabbitManager {
         });
         logger.info({ queue }, "rabbit consumer registered");
     }
-
     private static getRetryCount(msg: ConsumeMessage): number {
         const raw = msg.properties.headers?.["x-retry-count"];
         if (typeof raw === "number") {
@@ -158,7 +177,11 @@ export class RabbitManager {
             contentType: msg.properties.contentType ?? "application/json",
         });
         logger.warn(
-            { queue, deadLetterQueue, errorMessage: this.getErrorMessage(error) },
+            {
+                queue,
+                deadLetterQueue,
+                errorMessage: this.getErrorMessage(error),
+            },
             "rabbit message published to dead letter queue",
         );
     }

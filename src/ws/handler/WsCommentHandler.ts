@@ -1,4 +1,5 @@
 import WebSocket, { RawData } from "ws";
+import { ServiceHandlers } from "./CommentServiceHandler.js";
 
 export type TypingMessage = {
     status: "TYPING";
@@ -27,7 +28,7 @@ export type CommentEvent =
     | {
           type: "COMMENT_PUBLISHED";
           room: string;
-          user: string;
+          userId: string;
           content: string;
           timestamp: string;
           isReply: boolean;
@@ -37,40 +38,33 @@ export type CommentEvent =
           type: "COMMENT_DELETED";
           room: string;
           commentId: string;
-          user: string;
+          userId: string;
           timestamp: string;
           isReply: boolean;
           replyId: string | null;
       };
-
-type BroadcastFn = (
-    status: "TYPING" | "COMMENT_PUBLISHED" | "COMMENT_DELETED",
-    room: string,
-    payload: string,
-    sender?: WebSocket,
-) => void;
-type PublishFn = (event: CommentEvent) => Promise<void>;
 
 export class WsCommentHandler {
     private constructor() {}
 
     public static handleMessage = async (
         message: RawData,
+        rooms: Map<string, Set<WebSocket>>,
         room: string,
         websocket: WebSocket,
-        user: string,
-        broadcastFn: BroadcastFn,
-        publishFn: PublishFn,
+        userId: string,
+        userName: string,
     ): Promise<void> => {
         const incomingMessage: MessageFormat = JSON.parse(message.toString());
 
         if (incomingMessage.status === "TYPING") {
-            broadcastFn(
-                "TYPING",
+            ServiceHandlers.BroadcastFn(
+                rooms,
                 room,
                 JSON.stringify({
                     status: "TYPING",
-                    user,
+                    userId,
+                    userName,
                     timestamp: new Date().toISOString(),
                 }),
                 websocket,
@@ -82,34 +76,39 @@ export class WsCommentHandler {
             const event: CommentEvent = {
                 type: "COMMENT_PUBLISHED",
                 room,
-                user,
+                userId,
                 content: incomingMessage.content,
                 timestamp: new Date().toISOString(),
                 isReply: incomingMessage.isReply,
                 replyId: incomingMessage.replyId,
             };
 
-            broadcastFn(
-                "COMMENT_PUBLISHED",
+            ServiceHandlers.BroadcastFn(
+                rooms,
                 room,
-                JSON.stringify(event),
+                JSON.stringify({ ...event, userName }),
                 websocket,
             );
-            await publishFn(event);
+            await ServiceHandlers.PublishFn(event);
             return;
         }
 
         const event: CommentEvent = {
             type: "COMMENT_DELETED",
             room,
-            user,
+            userId,
             isReply: incomingMessage.isReply,
             commentId: incomingMessage.id,
             timestamp: new Date().toISOString(),
             replyId: incomingMessage.replyId,
         };
 
-        broadcastFn("COMMENT_DELETED", room, JSON.stringify(event), websocket);
-        await publishFn(event);
+        ServiceHandlers.BroadcastFn(
+            rooms,
+            room,
+            JSON.stringify({ ...event, userName }),
+            websocket,
+        );
+        await ServiceHandlers.PublishFn(event);
     };
 }

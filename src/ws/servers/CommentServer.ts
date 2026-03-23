@@ -2,8 +2,7 @@ import { IncomingMessage } from "node:http";
 import { Socket } from "node:net";
 import WebSocket, { RawData, WebSocketServer } from "ws";
 import { JwtHelper } from "../../lib/jwt.js";
-import { request } from "express";
-import { AuthError } from "../../lib/exceptions/AuthException.js";
+import { logger } from "../../lib/logger.js";
 import { WsCommentHandler } from "../handler/WsCommentHandler.js";
 
 export class CommentServer {
@@ -25,24 +24,30 @@ export class CommentServer {
 
                 const user = incomingRequest.user;
                 if (!user) {
+                    logger.warn({ url: request.url }, "comment ws unauthorized connection");
                     websocket.close(1008, "Unauthorized");
                     return;
                 }
-                const room = this.getRoom(request, websocket);
+                const room = this.getRoom(request);
                 if (room == null) {
+                    logger.warn({ url: request.url }, "comment ws missing room");
                     websocket.close(4404, "ROOM NOT FOUND");
                     return;
                 }
                 this.joinRoom(room, websocket);
                 websocket.on("message", (message: RawData) => {
-                    WsCommentHandler.handleMessage(
+                    void WsCommentHandler.handleMessage(
                         message,
+                        this.rooms,
                         room,
                         websocket,
+                        user.id,
                         user.name,
                     );
                 });
-                //remaining code
+                websocket.on("close", () => {
+                    this.leaveRoom(room, websocket);
+                });
             },
         );
     }
@@ -55,6 +60,7 @@ export class CommentServer {
         try {
             const token = this.jwtHelper.parseJwtFromRequest(request);
             if (!token) {
+                logger.warn({ url: request.url }, "comment ws missing token");
                 socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
                 socket.destroy();
                 return;
@@ -73,27 +79,41 @@ export class CommentServer {
                 socket,
                 head,
                 (ws, req) => {
+                    logger.info(
+                        { url: request.url, userId: userDetails.id },
+                        "comment ws upgrade accepted",
+                    );
                     this.commentServer.emit("connection", ws, req);
                 },
             );
         } catch (error) {
+            logger.error({ err: error, url: request.url }, "comment ws upgrade failed");
             socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
             socket.destroy();
         }
     }
 
     public joinRoom(room: string, websocket: WebSocket): void {
-        if (this.rooms.get(room)) {
+        if (!this.rooms.get(room)) {
             this.rooms.set(room, new Set());
         }
         this.rooms.get(room)!.add(websocket);
     }
 
-    public getRoom(
-        request: IncomingMessage,
-        websocket: WebSocket,
-    ): string | null {
-        const url = new URL(request.url ?? "", process.env.API_URL);
+    public leaveRoom(room: string, websocket: WebSocket): void {
+        const members = this.rooms.get(room);
+        if (!members) {
+            return;
+        }
+
+        members.delete(websocket);
+        if (members.size === 0) {
+            this.rooms.delete(room);
+        }
+    }
+
+    public getRoom(request: IncomingMessage): string | null {
+        const url = new URL(request.url ?? "", "http://localhost");
         const room = url.searchParams.get("room");
         return room;
     }

@@ -1,5 +1,6 @@
 import type { Server as HttpServer, IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
+import { logger } from "../lib/logger.js";
 import { CollabServer } from "./servers/CollabServer.js";
 import { CommentServer } from "./servers/CommentServer.js";
 
@@ -36,8 +37,10 @@ export class UpgradeHandler {
                         return;
                     }
 
+                    logger.warn({ pathName, url: request.url }, "ws upgrade rejected: unknown route");
                     socket.destroy();
-                } catch {
+                } catch (error) {
+                    logger.error({ err: error, url: request.url }, "ws upgrade failed");
                     socket.destroy();
                 }
             },

@@ -1,25 +1,41 @@
-import { ChannelModel } from "amqplib";
 import { RabbitManager } from "../../lib/rabbit.js";
 import WebSocket from "ws";
+import { CommentEvent } from "./WsCommentHandler.js";
 
-type BroadcastFn = (room: string, payload: string, sender?: WebSocket) => void;
 export class ServiceHandlers {
-    private rabbitClient: ChannelModel | null = null;
-
     private constructor() {}
 
-    private static async create(): Promise<ServiceHandlers> {
-        const instance = new ServiceHandlers();
-        instance.rabbitClient = await RabbitManager.getClient();
-        return instance;
-    }
-
-    public async BroadCastFn(
-        status: "TYPING" | "COMMENT_PUBLISHED" | "COMMENT_DELETED",
+    public static BroadcastFn(
+        rooms: Map<string, Set<WebSocket>>,
         room: string,
         payload: string,
-        sender: WebSocket,
+        sender?: WebSocket,
     ) {
-        const client = await ServiceHandlers.create();
+        const members = rooms.get(room);
+        if (members == null) return;
+
+        for (const client of members) {
+            if (client === sender) continue;
+            if (client.readyState !== WebSocket.OPEN) continue;
+            client.send(payload);
+        }
+    }
+
+    public static async PublishFn(event: CommentEvent) {
+        if (event.type === "COMMENT_PUBLISHED") {
+            await RabbitManager.publish(
+                "comment.events",
+                "comment.event.published",
+                JSON.stringify(event),
+            );
+        }
+
+        if (event.type === "COMMENT_DELETED") {
+            await RabbitManager.publish(
+                "comment.events",
+                "comment.event.deleted",
+                JSON.stringify(event),
+            );
+        }
     }
 }
