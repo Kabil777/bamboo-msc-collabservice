@@ -37,10 +37,16 @@ export class UpgradeHandler {
                         return;
                     }
 
-                    logger.warn({ pathName, url: request.url }, "ws upgrade rejected: unknown route");
+                    logger.warn(
+                        { pathName, url: request.url },
+                        "ws upgrade rejected: unknown route",
+                    );
                     socket.destroy();
                 } catch (error) {
-                    logger.error({ err: error, url: request.url }, "ws upgrade failed");
+                    logger.error(
+                        { err: error, url: request.url },
+                        "ws upgrade failed",
+                    );
                     socket.destroy();
                 }
             },
